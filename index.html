@@ -119,7 +119,7 @@ legend{font:600 10.5px var(--h-sans);letter-spacing:.07em;color:var(--h-ink3)}
         <div id="dz">⇩ Drop files here or click</div>
         <input type="file" id="imgFile" accept="image/*" hidden multiple>
         <div style="margin-top:8px"><button class="btn" id="urlBtn">URL…</button>
-          <select class="tin" id="demoPick" style="width:auto;display:inline-block"><option>A</option><option>blob</option><option>ring</option><option>check</option></select>
+          <select class="tin" id="demoPick" style="width:auto;display:inline-block"><option>orb</option><option>A</option><option>blob</option><option>ring</option><option>check</option></select>
           <button class="btn" id="demoAdd">+ shape</button></div>
         <div class="row sel2" id="urlRow" style="display:none;margin-top:6px"><input class="tin" id="urlIn" placeholder="https://…png"><button class="btn" id="urlGo" style="margin:0">Load</button></div>
         <div id="srcList"></div>
@@ -319,7 +319,7 @@ function imageToField(src, G) {
   };
 }
 
-const SHAPES = [ 'mixed', 'char', 'circle', 'pill', 'diamond', 'triangle', 'ring', 'plus' ];
+const SHAPES = [ 'duo', 'mixed', 'char', 'circle', 'pill', 'diamond', 'triangle', 'ring', 'plus' ];
 
 const MIX = [ 'circle', 'pill', 'diamond', 'triangle' ];
 
@@ -371,15 +371,18 @@ const state = {
     radius: 1
   },
   grid: {
-    cell: 14,
-    steps: 6,
-    minR: 3,
-    maxR: 15,
-    floorCut: .1,
+    cell: 18,
+    steps: 7,
+    minR: 2.8,
+    maxR: 12.5,
+    floorCut: .07,
     soft: .2,
-    edgeFade: .25,
+    edgeFade: 0,
     scale: 1,
-    jitter: .35,
+    jitter: 0,
+    stagger: 1,
+    tone: .34,
+    breath: .05,
     invert: 0
   },
   story: {
@@ -392,7 +395,7 @@ const state = {
     transition: 'direct'
   },
   obj: {
-    shape: 'mixed',
+    shape: 'duo',
     symbols: '✳,●,◆',
     size: 1,
     variance: .4,
@@ -416,9 +419,9 @@ const gl = cv.getContext('webgl2', {
 
 let W = 0, H = 0, DPR = 1;
 
-const VERT = `#version 300 es\nlayout(location=0) in vec2 a_quad;\nlayout(location=1) in vec2 a_pos;\nlayout(location=2) in float a_size;\nlayout(location=3) in float a_alpha;\nlayout(location=4) in float a_rot;\nlayout(location=5) in float a_glyph;\nuniform vec2 u_res; uniform float u_atlasN;\nout vec2 v_uv; out float v_alpha; out float v_tone;\nvoid main(){\n  float s=sin(a_rot), c=cos(a_rot);\n  vec2 q=vec2(a_quad.x*c-a_quad.y*s, a_quad.x*s+a_quad.y*c);\n  vec2 p=q*a_size + a_pos;\n  vec2 clip=(p/u_res)*2.0-1.0; clip.y=-clip.y;\n  gl_Position=vec4(clip,0.0,1.0);\n  vec2 uv=a_quad+0.5;\n  v_uv=vec2((uv.x + a_glyph)/u_atlasN, uv.y);\n  v_alpha=a_alpha;\n  v_tone=mix(0.34,0.86,clamp((a_size-6.0)/30.0,0.0,1.0));\n}`;
+const VERT = `#version 300 es\nlayout(location=0) in vec2 a_quad;\nlayout(location=1) in vec2 a_pos;\nlayout(location=2) in float a_size;\nlayout(location=3) in float a_alpha;\nlayout(location=4) in float a_rot;\nlayout(location=5) in float a_glyph;\nuniform vec2 u_res; uniform float u_atlasN;\nout vec2 v_uv; out float v_alpha;\nvoid main(){\n  float s=sin(a_rot), c=cos(a_rot);\n  vec2 q=vec2(a_quad.x*c-a_quad.y*s, a_quad.x*s+a_quad.y*c);\n  vec2 p=q*a_size + a_pos;\n  vec2 clip=(p/u_res)*2.0-1.0; clip.y=-clip.y;\n  gl_Position=vec4(clip,0.0,1.0);\n  vec2 uv=a_quad+0.5;\n  v_uv=vec2((uv.x + a_glyph)/u_atlasN, uv.y);\n  v_alpha=a_alpha;\n}`;
 
-const FRAG = `#version 300 es\nprecision mediump float;\nin vec2 v_uv; in float v_alpha; in float v_tone;\nuniform sampler2D u_atlas; uniform vec3 u_ink;\nout vec4 frag;\nvoid main(){ float a=texture(u_atlas,v_uv).a*v_alpha*v_tone; if(a<0.01) discard; frag=vec4(u_ink*a, a); }`;
+const FRAG = `#version 300 es\nprecision mediump float;\nin vec2 v_uv; in float v_alpha;\nuniform sampler2D u_atlas; uniform vec3 u_ink;\nout vec4 frag;\nvoid main(){ float a=texture(u_atlas,v_uv).a*v_alpha; if(a<0.01) discard; frag=vec4(u_ink*a, a); }`;
 
 function compile(type, src) {
   const s = gl.createShader(type);
@@ -582,6 +585,7 @@ function glyphIndexFor(b) {
     const base = MIX.length + 3;
     return base + b.id % Math.max(1, SYMS.length);
   }
+  if (sh === 'duo') return b.id % 2 ? MIX.indexOf('diamond') : MIX.indexOf('circle');
   if (sh === 'mixed') return b.id % MIX.length;
   const gl2 = GLYPHS();
   const idx = gl2.findIndex(g => g.type === 'shape' && g.val === sh);
@@ -647,14 +651,19 @@ function ensurePool() {
 function layout(f) {
   const boxH = Math.min(W, H) * .82 * (state.grid.scale || 1), scale = boxH / f.rows, gw = f.cols * scale, gh = f.rows * scale;
   const ox = target.x * W - gw / 2, oy = target.y * H - gh / 2, G = state.grid, out = [];
+  const MIXI = MIX.indexOf('circle'), DIAI = MIX.indexOf('diamond');
   for (const cell of f.cells) {
     const jr = rng((cell.c * 73856093 ^ cell.r * 19349663 ^ seed) >>> 0);
-    const jx = (jr() - .5) * G.jitter * scale, jy = (jr() - .5) * G.jitter * scale;
+    const jx = (jr() - .5) * G.jitter * scale, jy = (jr() - .5) * G.jitter * scale, st = G.stagger && cell.r & 1 ? .5 * scale : 0;
     const size = lerp(G.minR, G.maxR, Math.sqrt(cell.q)) * state.obj.size * cell.sf;
+    const tone = lerp(G.tone, .82, Math.pow(cell.q, .85)) * lerp(.7, 1, cell.sf);
+    const gi = state.obj.shape === 'duo' ? cell.c + cell.r & 1 ? DIAI : MIXI : -1;
     out.push({
-      x: ox + (cell.c + .5) * scale + jx,
+      x: ox + (cell.c + .5) * scale + jx + st,
       y: oy + (cell.r + .5) * scale + jy,
-      size: size
+      size: size,
+      tone: tone,
+      gi: gi
     });
   }
   return out;
@@ -671,41 +680,30 @@ function assign(f) {
   let cells = cellsAll;
   if (cells.length > n) cells = cellsAll.slice().sort((a, b) => b.size * b.size - a.size * a.size).slice(0, n);
   const M = cells.length;
-  const mass = cells.map(c => Math.max(.001, c.size * c.size));
-  let sum = 0;
-  for (const m of mass) sum += m;
-  const alloc = new Array(M).fill(1);
-  let remaining = n - M;
-  const want = mass.map(m => remaining * m / sum);
-  for (let i = 0; i < M; i++) alloc[i] += Math.floor(want[i]);
-  let leftover = n - alloc.reduce((a, b) => a + b, 0);
-  const frac = want.map((w, i) => ({
-    i: i,
-    f: w - Math.floor(w)
-  })).sort((a, b) => b.f - a.f);
-  for (let j = 0; leftover > 0; j++, leftover--) alloc[frac[j % M].i]++;
-  const flat = [];
-  for (let i = 0; i < M; i++) {
-    const c = cells[i], k = alloc[i], sz = c.size / Math.sqrt(k) * 1.12;
-    for (let j = 0; j < k; j++) {
-      const rr = rng((i * 2654435761 ^ j * 40503 ^ seed >>> 0) >>> 0);
-      const ang = rr() * 6.2832, rad = k > 1 ? Math.sqrt(rr()) * c.size * .52 : 0;
-      flat.push({
-        x: c.x + Math.cos(ang) * rad,
-        y: c.y + Math.sin(ang) * rad,
-        size: sz
-      });
-    }
-  }
+  const flat = cells.map(c => ({
+    x: c.x,
+    y: c.y,
+    size: c.size,
+    tone: c.tone,
+    gi: c.gi
+  }));
   const kf = g => Math.round(g.y / 22) * 1e5 + g.x;
   const order = bits.map((b, i) => i).sort((a, b) => kf(bits[a]) - kf(bits[b]));
   flat.sort((a, b) => kf(a) - kf(b));
-  for (let k = 0; k < n; k++) {
-    const b = bits[order[k]], g = flat[k];
+  const take = Math.min(M, n), stride = n / take;
+  for (const b of bits) {
+    b.spare = true;
+    b.bound = false;
+  }
+  for (let k = 0; k < take; k++) {
+    const b = bits[order[Math.min(n - 1, Math.round(k * stride))]], g = flat[k];
+    b.spare = false;
     b.bound = true;
     b.tx = g.x;
     b.ty = g.y;
     b.tsize = g.size;
+    b.ttone = g.tone;
+    b.tgi = g.gi;
     b.talpha = 1;
   }
 }
@@ -764,8 +762,15 @@ function step(b, dt) {
     }
     b.x += b.vx * dt * s.speed;
     b.y += b.vy * dt * s.speed;
-    b.rad += (b.tsize - b.rad) * Math.min(1, dt * 4);
-    b.al += (1 - b.al) * Math.min(1, dt * 5);
+    const br = 1 + state.grid.breath * Math.sin(t * .9 + (b.tx + b.ty) * .012);
+    b.rad += (b.tsize * br - b.rad) * Math.min(1, dt * 4);
+    b.al += ((b.ttone ?? 1) - b.al) * Math.min(1, dt * 5);
+    if (fe > .5 && b.tgi >= 0 && b.tgi != null) b.gi = b.tgi;
+    if (fe > .5) {
+      let r = ((b.rot + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      b.av = 0;
+      b.rot -= r * Math.min(1, dt * 6);
+    }
   } else {
     const near = [];
     const cs = Math.max(40, sw.separation * .4);
@@ -801,10 +806,12 @@ function step(b, dt) {
     if (b.y < -30) b.y = H + 30;
     if (b.y > H + 30) b.y = -30;
     b.rad += (b.baseRad - b.rad) * Math.min(1, dt * 3);
-    b.al += (.86 - b.al) * Math.min(1, dt * 3);
+    b.al += ((b.spare && (phase === 'forming' || phase === 'held') ? 0 : .62) - b.al) * Math.min(1, dt * 3);
   }
-  b.av *= dampFactor(.9, dt);
-  b.rot += b.av * dt + Math.sin(t * .3 + b.seed * 11) * dt * .4;
+  if (!forming) {
+    b.av *= dampFactor(.9, dt);
+    b.rot += b.av * dt + Math.sin(t * .3 + b.seed * 11) * dt * .4;
+  } else b.rot += b.av * dt;
 }
 
 let nGrid = new Map;
@@ -949,7 +956,26 @@ function demoCanvas(kind) {
   c.fillStyle = '#fff';
   c.fillRect(0, 0, S, S);
   c.fillStyle = '#111';
-  if (kind === 'A') {
+  if (kind === 'orb') {
+    const im = c.createImageData(S, S), d = im.data, R = S * .36, cx = S * .5, cy = S * .44;
+    const lx = -.5, ly = -.56, lz = .66, ll = Math.hypot(lx, ly, lz);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const o = (y * S + x) * 4;
+      let L = 1;
+      const nx = (x + .5 - cx) / R, ny = (y + .5 - cy) / R, q = nx * nx + ny * ny;
+      const sx = (x + .5 - S * .52) / (S * .3), sy = (y + .5 - S * .865) / (S * .075), sd = sx * sx + sy * sy;
+      if (sd < 1) L = Math.min(L, 1 - .5 * Math.pow(1 - sd, 1.6));
+      if (q < 1) {
+        const nz = Math.sqrt(1 - q), lam = Math.max(0, (nx * lx + ny * ly + nz * lz) / ll);
+        const bounce = Math.pow(Math.max(0, nx * .55 + ny * .7), 2) * (1 - nz) * .22;
+        L = Math.min(.8, .12 + .8 * Math.pow(lam, .85) + bounce);
+      }
+      const v = Math.round(L * 255);
+      d[o] = d[o + 1] = d[o + 2] = v;
+      d[o + 3] = 255;
+    }
+    c.putImageData(im, 0, 0);
+  } else if (kind === 'A') {
     c.font = '700 210px ui-monospace, monospace';
     c.textAlign = 'center';
     c.textBaseline = 'middle';
@@ -1076,7 +1102,7 @@ function onParam(key) {
       cur = FIELDS[beat];
       assign(cur);
     }
-  } else if (cur && phase !== 'free' && (key === 'grid.minR' || key === 'grid.maxR' || key === 'grid.jitter' || key === 'grid.scale' || key === 'obj.size')) assign(cur);
+  } else if (cur && phase !== 'free' && (key === 'grid.minR' || key === 'grid.maxR' || key === 'grid.jitter' || key === 'grid.scale' || key === 'obj.size' || key === 'grid.stagger' || key === 'grid.tone')) assign(cur);
 }
 
 function sliders(elId, defs) {
@@ -1153,7 +1179,7 @@ function applyManner(m) {
   state.swarm.flow = p.flow;
 }
 
-sliders('gGrid', [ [ 'grid.scale', 'Photo scale', .3, 1.6, .05 ], [ 'grid.cell', 'Cell', 6, 26, 1 ], [ 'grid.steps', 'Steps', 2, 16, 1 ], [ 'grid.minR', 'Min size', 2, 10, .2 ], [ 'grid.maxR', 'Max size', 6, 26, .5 ], [ 'grid.floorCut', 'Background cut', 0, .5, .02 ], [ 'grid.soft', 'Edge feather', 0, .6, .02 ], [ 'grid.edgeFade', 'Edge fade', 0, 1, .05 ], [ 'grid.jitter', 'Jitter', 0, .9, .05 ], [ 'grid.invert', 'Invert (light = large)', 0, 1, 1 ] ]);
+sliders('gGrid', [ [ 'grid.scale', 'Photo scale', .3, 1.6, .05 ], [ 'grid.cell', 'Cell', 6, 26, 1 ], [ 'grid.steps', 'Steps', 2, 16, 1 ], [ 'grid.minR', 'Min size', 2, 10, .2 ], [ 'grid.maxR', 'Max size', 6, 26, .5 ], [ 'grid.floorCut', 'Background cut', 0, .5, .02 ], [ 'grid.soft', 'Edge feather', 0, .6, .02 ], [ 'grid.edgeFade', 'Edge fade', 0, 1, .05 ], [ 'grid.jitter', 'Jitter', 0, .9, .05 ], [ 'grid.stagger', 'Stagger rows', 0, 1, 1 ], [ 'grid.tone', 'Lightest tone', .1, .8, .02 ], [ 'grid.breath', 'Breath', 0, .2, .01 ], [ 'grid.invert', 'Invert (light = large)', 0, 1, 1 ] ]);
 
 sliders('gStory', [ [ 'story.urge', 'Snap force', 10, 90, 2 ], [ 'story.dwell', 'Hold (loop)', .5, 6, .1 ], [ 'story.gap', 'Dissolve', .4, 3, .1 ] ]);
 
@@ -1377,6 +1403,26 @@ syncLoop();
 setNow('Halftone', 'free cloud · drop an image');
 
 requestAnimationFrame(frame);
+
+(() => {
+  const id = addField(demoCanvas('orb'), 'orb');
+  showBeat(id);
+  for (const b of bits) {
+    if (b.bound) {
+      b.x = b.tx;
+      b.y = b.ty;
+      b.vx = b.vy = 0;
+      b.rad = b.tsize;
+      b.al = b.ttone;
+      b.rot = 0;
+      b.av = 0;
+      b.gi = b.tgi >= 0 ? b.tgi : b.gi;
+    }
+  }
+  phase = 'held';
+  pt = 0;
+  setNow('orb', 'held');
+})();
 
 function selftest() {
   let ok = !!prog && gl.getProgramParameter(prog, gl.LINK_STATUS) && ATLAS_N > 0;
